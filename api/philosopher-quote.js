@@ -1,197 +1,159 @@
-// import fetch from 'node-fetch'; // Import fetch to make API requests in Node.js environment
-
 // Define color constants for the SVG theme (TokyoNight)
-const TOKYONIGHT_BG = '#1a1b26';  // Dark background
-const COLOR_QUOTE = '#c0caf5';    // Light blue for the quote text
-const COLOR_AUTHOR = '#7aa2f7';   // Slightly brighter blue for author
-const COLOR_YEAR = '#f7768e';     // Pinkish color for the year
+const TOKYONIGHT_BG = '#1a1b26';
+const COLOR_QUOTE = '#c0caf5';
+const COLOR_AUTHOR = '#7aa2f7';
+const COLOR_YEAR = '#f7768e';
 
-
-function escapeXML(str) { // Escape special XML characters
-  return str.replace(/[&<>"']/g, (m) => {
-    switch (m) {
-      case '&': return '&amp;';
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      case '"': return '&quot;';
-      case "'": return '&apos;';
-      default: return m;
-    }
-  });
+// Utility to escape XML entities for SVG safety
+function escapeXML(str) {
+  return str.replace(/[&<>"']/g, (m) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&apos;',
+  }[m] || m));
 }
 
-/**
- * Split a long text into multiple lines to fit within a max length per line.
- * This helps in wrapping the quote nicely inside the SVG.
- * @param {string} text The full text to wrap
- * @param {number} maxLen Maximum characters per line (default 38)
- * @returns {string[]} Array of text lines
- */
+// Wrap long quote text into multiple lines based on max characters
 function wrapText(text, maxLen = 38) {
   const words = text.split(' ');
   const lines = [];
   let currentLine = '';
 
-  // Iterate words, adding them to current line or pushing new line if max length exceeded
   for (const word of words) {
     if ((currentLine + word).length <= maxLen) {
-      // Add space if line not empty, then add word
       currentLine += (currentLine ? ' ' : '') + word;
     } else {
-      if (currentLine) lines.push(currentLine); // push finished line
-      currentLine = word; // start new line with current word
+      lines.push(currentLine);
+      currentLine = word;
     }
   }
 
-  if (currentLine) lines.push(currentLine); // push remaining line
+  if (currentLine) lines.push(currentLine);
   return lines;
 }
 
-// Main API handler function to generate the SVG with a random quote
 export default async function handler(req, res) {
   try {
-    // 1. Fetch all quotes from the quotes API
+    // 1. Fetch all available quotes
     const quotesRes = await fetch('https://philosophersapi.com/api/quotes');
-    const quotesData = await quotesRes.json();
+    const quotes = await quotesRes.json();
 
-    // If no quotes returned, throw an error
-    if (!quotesData || !quotesData.length) {
-      throw new Error('No quotes found');
-    }
+    if (!quotes || !quotes.length) throw new Error('No quotes returned');
 
-    // 2. Select a random quote from the list
-    const randomIndex = Math.floor(Math.random() * quotesData.length);
-    const quoteObj = quotesData[randomIndex];
+    // 2. Pick a deterministic quote each day (based on day of year)
+    const dayOfYear = Math.floor(
+      (new Date() - new Date(new Date().getFullYear(), 0, 0)) / 86400000
+    );
+    const index = dayOfYear % quotes.length;
+    const quoteObj = quotes[index];
 
-    // 3. Extract philosopher ID to fetch philosopher details
+    // 3. Fetch philosopher details (by ID)
     const philosopherId = quoteObj.philosopher?.id;
-    let authorName = 'Unknown Philosopher'; // Default if name unavailable
+    let authorName = 'Unknown Philosopher';
 
-    // 4. Fetch philosopher details by ID to get the philosopher's name
     if (philosopherId) {
       try {
-        // Fetch philosopher data from the philosopher API
-        const philosopherRes = await fetch(`https://philosophersapi.com/api/philosophers/${philosopherId}`);
-        if (philosopherRes.ok) {
-          const philosopherData = await philosopherRes.json();
-          // If name exists, override default unknown name
-          if (philosopherData?.name) {
-            authorName = philosopherData.name;
-          }
+        const res = await fetch(`https://philosophersapi.com/api/philosophers/${philosopherId}`);
+        if (res.ok) {
+          const philosopherData = await res.json();
+          if (philosopherData?.name) authorName = philosopherData.name;
         }
-      } catch {
-        // If philosopher fetch fails, silently continue with "Unknown Philosopher"
+      } catch (err) {
+        console.warn('Philosopher fetch failed', err);
       }
     }
 
-    // 5. Extract other relevant data from the quote object
-    const quote = quoteObj.quote || 'No quote available.';
-    const work = quoteObj.work || '';
-    const year = quoteObj.year || '';
+    // 4. Safely escape all text fields
+    const quote = escapeXML(quoteObj.quote || 'No quote found.');
+    const work = escapeXML(quoteObj.work || '');
+    const year = escapeXML(quoteObj.year || '');
+    const author = escapeXML(authorName);
 
-    // Escape all strings to ensure safe XML output
-    const safeQuote = escapeXML(quote);
-    const safeAuthor = escapeXML(authorName);
-    const safeWork = escapeXML(work);
-    const safeYear = escapeXML(year);
-
-    // 6. Wrap the quote text into multiple lines for SVG rendering
-    const lines = wrapText(safeQuote, 38);
+    // 5. Wrap quote into lines
+    const lines = wrapText(quote, 38);
     const lineCount = lines.length;
+    const fontSizeQuote = lineCount > 5 ? 22 : 26;
 
-    // Define SVG layout variables
-    const lineHeight = 28;      // Vertical spacing between lines
-    const paddingTop = 40;      // Top padding before the quote text
-    const paddingBottom = 60;   // Bottom padding after text for author info
+    // SVG layout dimensions
+    const paddingTop = 40;
+    const paddingBottom = 70;
+    const lineHeight = 28;
+    const svgHeight = paddingTop + (lineCount * lineHeight) + paddingBottom;
 
-    // Calculate the total height of SVG based on lines and padding
-    const svgHeight = paddingTop + lineHeight * lineCount + paddingBottom;
-
-    // Create <tspan> elements for each wrapped line to position inside SVG text
+    // Build tspan elements
     const tspans = lines
-      .map((line, idx) => `<tspan x="40" dy="${idx === 0 ? 0 : lineHeight}">${line}</tspan>`)
+      .map((line, i) => `<tspan x="40" dy="${i === 0 ? 0 : lineHeight}">${line}</tspan>`)
       .join('');
 
-    // Adjust quote font size if the quote is very long (more than 5 lines)
-    const baseFontSize = 26;
-    const fontSizeQuote = lineCount > 5 ? 22 : baseFontSize;
-
-    // 7. Generate the SVG markup string with embedded styles and dynamic content
+    // 6. Final SVG
     const svg = `
-        <svg
-        width="700"
-        height="${svgHeight}"
-        viewBox="0 0 700 ${svgHeight}"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        role="img"
-        aria-labelledby="title desc"
-        >
-        <title id="title">Random Developer Quote</title>
-        <desc id="desc">A thoughtful developer quote displayed elegantly</desc>
+<svg
+  width="740"
+  height="${svgHeight}"
+  viewBox="0 0 740 ${svgHeight}"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+  role="img"
+  aria-labelledby="title desc"
+>
+  <title id="title">Daily Developer Quote</title>
+  <desc id="desc">Philosophical quote updated daily</desc>
 
-        <style>
-            <![CDATA[
-            rect.background {
-                fill: ${TOKYONIGHT_BG};
-                rx: 12; /* rounded corners */
-                ry: 12;
-            }
-            text.quote {
-                font-family: 'Fira Sans', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                font-weight: 600;
-                font-size: ${fontSizeQuote}px;
-                fill: ${COLOR_QUOTE};
-                letter-spacing: 0.02em;
-                dominant-baseline: middle;
-            }
-            text.author {
-                font-family: 'Fira Sans', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                font-weight: 500;
-                font-size: 18px;
-                fill: ${COLOR_AUTHOR};
-            }
-            text.year {
-                font-family: 'Fira Sans', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                font-weight: 400;
-                font-size: 16px;
-                fill: ${COLOR_YEAR};
-            }
-            text.work {
-                font-style: italic;
-            }
-            ]]>
-        </style>
+  <style><![CDATA[
+    rect.background {
+      fill: ${TOKYONIGHT_BG};
+      rx: 12;
+      ry: 12;
+    }
+    text.quote {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: ${fontSizeQuote}px;
+      fill: ${COLOR_QUOTE};
+      font-weight: 600;
+      dominant-baseline: middle;
+    }
+    text.author {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 18px;
+      fill: ${COLOR_AUTHOR};
+      font-weight: 500;
+    }
+    text.work {
+      font-style: italic;
+    }
+    text.year {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 16px;
+      fill: ${COLOR_YEAR};
+      text-anchor: end;
+    }
+  ]]></style>
 
-        <!-- Background rounded rectangle -->
-        <rect class="background" width="700" height="${svgHeight}" />
+  <rect class="background" width="740" height="${svgHeight}" />
 
-        <!-- Quote text wrapped in multiple lines -->
-        <text x="40" y="${paddingTop}" class="quote">${tspans}</text>
+  <text x="40" y="${paddingTop}" class="quote">${tspans}</text>
 
-        <!-- Author name and work (if available) positioned near bottom left -->
-        <text x="40" y="${svgHeight - 40}" class="author">
-            ${escapeXML(`— ${safeAuthor}`)}${safeWork ? `, ` : ''}
-            <tspan class="work">${safeWork}</tspan>
-        </text>
+  <text x="40" y="${svgHeight - 36}" class="author">
+    — ${author}${work ? `, ` : ''}<tspan class="work">${work}</tspan>
+  </text>
 
-        <!-- Year, positioned bottom right if available -->
-        ${safeYear ? `<text x="660" y="${svgHeight - 40}" class="year" text-anchor="end">${safeYear}</text>` : ''}
-        </svg>
-        `;
+  ${year ? `<text x="700" y="${svgHeight - 36}" class="year">${year}</text>` : ''}
+</svg>`;
 
-    // 8. Set response headers to return SVG image with cache control
-    res.setHeader('Content-Type', 'image/svg+xml'); 
-    res.setHeader('Cache-Control', 'public, max-age=3600');
-    // Send the SVG markup as response
-    return res.status(200).send(svg);
-  } catch (err) {
-    // In case of error, log it and return a minimal SVG error message
-    console.error(err);
-    return res.status(500).send(`
+    // 7. Send SVG with headers to disable caching
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    res.status(200).send(svg);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send(`
 <svg xmlns="http://www.w3.org/2000/svg" width="400" height="60" fill="red">
   <text x="10" y="30" font-family="Arial" font-size="14">Error loading quote.</text>
-</svg>
-    `);
+</svg>`);
   }
 }
