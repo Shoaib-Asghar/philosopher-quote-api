@@ -9,9 +9,10 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "module",
+  "type": "commonjs",
   "dependencies": {
     "canvas": "^3.1.2",
+    "express": "^5.1.0",
     "node-fetch": "^3.3.2"
   }
 }
