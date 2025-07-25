@@ -161,8 +161,9 @@ export default async function handler(req, res) {
 
     // 7. Set headers to return SVG and disable caching (optional: adjust caching as needed)
     res.setHeader('Content-Type', 'image/svg+xml');
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    res.setHeader('Pragma', 'no-cache');
+    // res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');  
+    res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=30'); // Cache for 5 minutes, revalidate after 30 seconds
+    res.setHeader('Pragma', 'no-cache'); 
     res.setHeader('Expires', '0');
 
     // 8. Send SVG response
